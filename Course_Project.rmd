@@ -1,0 +1,170 @@
+---
+title: "Assignment for Practical Machine Learning"
+author: "Timothy Wilson"
+date: "24 October 2015"
+output: html_document
+---
+#SYNOPSIS  
+This markdown file develops a machine learning algorithm (specifically a random forest model) to predict the type of movement (classified as A, B, C, D or E) in the Weight Lifting Exercise Dataset.  
+Our model performs well, with a high accuracy rate (close to 1).  
+Admittedly, there is a risk of over-fitting, however, further data collection and analysis would be necessarily to accurately guage this risk and mitigate it accordinngly.
+   
+#SETTING UP  
+  
+###Preparing R    
+This model requires a number of packages to run it. This section loads those packages     
+```{r}
+library(dplyr) #loads the required packages
+library(ggplot2)
+library(caret)
+library(e1071)
+library(dplyr)
+library(randomForest)
+```
+   
+The working directory is also set.  
+```{r}
+setwd("/Users/aoifekenny/Desktop/DS/Practical_Machine_Learning")
+```
+  
+###The data
+The data comes from the "Weight Lifting Exercise Dataset" in which 6 participatns performed barbel exercises.  
+They performed these exercises in 5 different ways that are categorised in the "classe" variable as being one of the letters A, B, C, D or E.  
+Data was also collected from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. 
+The training component of the dataset that is used to build the model is downloaded fromthe following link:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv  
+The test component of the dataset that is used to test the results of the model (in the submission section of the project) was also downloaded from the following link:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv 
+We first read the data into R and process it so that it is in a correct format to build the model.
+```{r}
+data_start <-  read.csv("/Users/aoifekenny/Desktop/DS/pml-training.csv")
+outcome <- select(data_start, classe)
+data_start <- select(data_start, -classe)
+testing <- read.csv("/Users/aoifekenny/Desktop/DS/pml-testing.csv")
+testing_probid <- select(testing, problem_id)
+testing <- select(testing, -problem_id)
+data_start <- rbind(data_start, testing)
+rm(testing)
+```
+
+###Exploratory Data Analysis and Data Cleaning
+We begin with some exploratory data analysis.  
+First, we seek to identify any variables that have a large amount of missing values or N/As, and then eliminate those from the analysis.  
+```{r}
+a <- data.frame()
+for (i in 1:159){
+  b <- sum(is.na(data_start[,i]))
+  a <- rbind(a,b)
+}
+a <- cbind(a, colnames(data_start))
+
+hist_na <- ggplot(data=a) + 
+  geom_bar(aes(x=a[,2], y=a[,1]),stat="identity") + 
+  labs(x="Variables in training set from 'user_name' (far left) to 'amplitude_pitch_dumbell' (far right)", y="Number of N/As") + 
+  theme(axis.ticks = element_blank(), axis.text.x = element_blank())
+hist_na
+```
+  
+From this graph we find that there are a number of variables which have a large amount of missing values.  
+Let us remove any variable that has more than 95% missing values.
+This is because such variables may have been only partially measured and/or the N/A entries may cause problems with certain models.  
+```{r}
+threshold <- length(data_start[,1])*.95
+data_cleaned <- data_start[,a[1]<threshold]
+```
+Looking through the data, we also note that the X variable is an index so it should not have any predictive value.  Lets also remove that.
+```{r}
+data_cleaned <- select(data_cleaned, -X) 
+```
+In order to simplify the model, we can also remove those predictors that are likely to have very little predictive value, because they have a variance that is close to zero.
+```{r}
+ZeroVarNums <- nearZeroVar(data_cleaned)
+interim <- data.frame()
+for (i in 1:length(data_cleaned[0,])) {
+  if  (i %in% ZeroVarNums == FALSE) {
+    interim <- rbind(interim,i)
+  }
+}
+data_cleaned <- data_cleaned[,interim[,1]]
+```
+Now that we have prepared everything, we must split the data back into the original testing and training data sets, and put the classe variable back into the training dataset.
+```{r}
+#This code takes the last twenty observations of the combined dataset and saves them back as a test dataset.
+start <- length(data_cleaned$user_name) - 19
+start_less1 <- start - 1
+end <- length(data_cleaned$user_name)
+testing <- data_cleaned[start:end,]
+training_full <- data_cleaned[1:start_less1,]
+#This now puts the classe variable back into the testing variable so we can develop the model
+training_full <- cbind(training_full,outcome)
+```
+Since the variable we are trying to predict is 'classe,' it is worth examining this a bit more.  
+The below graph illustrates that category A is the most common category for classe.  
+This means that we may need to apply some weightings when building our model.  
+```{r}
+hist_classe <- ggplot(data = training_full) + geom_histogram(aes(x=classe))
+hist_classe <- hist_classe + ggtitle("Categories of Classe in the Training Dataset")
+hist_classe
+```
+  
+We will now partition the data so that later we can use cross-validation to estimated out of sample error.
+```{r}
+inTrain <- createDataPartition(y=training_full$classe,
+                               p = 0.75,
+                               list = FALSE)
+mytrain <- training_full[inTrain,]
+mytest <- training_full[-inTrain,]
+```
+  
+#THE MODEL
+We know that the classe variable is a categorical variable.  Therefore,it is likely that the best type of model will be a classification model.  
+Indeed, after some trial and erorr with different models (that I will not replicate here to save space), I found that the a Random Forest Model was highly effective.  
+```{r]}
+Model_rf <- randomForest(classe ~  .,
+                      method = "rf",
+                      verbose=FALSE,
+                      proximity=FALSE,
+                      data=mytrain)
+Model_rf
+```
+  
+The results of this model are encouraging.  In particular, the confusion matrix suggests that there is a very low error rate. 
+
+Admittedly, since we have achieved such a high accuracy, there is a risk of over-fitting, however, further data collection and analysis would be necessarily to accurately guage this risk and mitigate it accordinngly.  
+You may remember that above, our analysis of the Classe variable suggested that it might be necessary apply weightings... However, since the results suggest that our model is already very strong, we believe that is actually not necessary to apply weightings.  This sentiment is further confirmed when we estimate the out of sample error (next section).  
+
+Finally, you will note that we set proximity to FALSE.  While this is not a perfect idea, we found it was necesary because we found that the computation time was too long keeping it at TRUE.  Furthermore,  we found that our results were sufficiently accurate when it was set to FALSE so we kept it like this.  With more time (and perhaps a faster computer) it would be interesting to explore how much extra accuracy we acheive by setting proximity to TRUE.
+  
+#ESTIMATING THE OUT OF SAMPLE ERROR
+We now use cross validation to estimate our expected out of sample error
+```{r}
+mytest_noclasse <- select(mytest, -classe)
+model_predict_mytest <- predict(Model_rf, mytest_noclasse)
+confusionMatrix(model_predict_mytest, mytest[, "classe"])
+```
+These results suggest that our model performs well and has a high accuracy of close to 1.  
+
+That is, we believe that our of our sample error is low and we have a compelling model.  
+  
+Note, however, that this was based on a number of assumptions, including the assumption that our sample training set was selected from random and independent draws or at least, that the relationships which we used to derive the model are still valid when applied out of the sample.
+
+Furthermore,  we should caveat our estimate of the sample error with the fact that we know that these estimates are usually optimistic.  In order words, it is likely that our actual out of sample error is larger than this. 
+
+Nonetheless, the strength of our results suggests that we may well have built a model that could useful in predicting the class of behaviour ("classe") when one is able to collect the same predictor values and our key assumptions hold.
+  
+###Final task - submission of predicted values to Coursera
+This code generates the predicted results and formats them in a way that makes it easy to load the results on to Coursera.
+```{r}
+model_predict_test <- predict(Model_rf, testing)
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+setwd("/Users/aoifekenny/Desktop/DS/answers")
+pml_write_files(model_predict_test)
+setwd("/Users/aoifekenny/Desktop/DS/Practical_Machine_Learning")
+```
